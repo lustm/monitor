@@ -11,7 +11,8 @@ from flask import Flask
 from flask_apscheduler import APScheduler
 
 app = Flask(__name__)
-app.config["SERVER_URL"] = "http://localhost:90/push"
+# 推送服务器的接口地址
+app.config["SERVER_URL"] = "http://localhost"
 scheduler = APScheduler()
 scheduler.init_app(app)
 scheduler.start()
@@ -26,7 +27,7 @@ def index():
     return json.dumps(System.obtain_all_info())
 
 
-# @scheduler.task('interval', id='push_job', seconds=3, misfire_grace_time=900)
+@scheduler.task('interval', id='push_job', seconds=3, misfire_grace_time=900)
 def push_job():
     """
     定时任务 推送系统信息
