@@ -9,6 +9,7 @@ import requests
 import speedtest
 from flask import Flask
 from flask_apscheduler import APScheduler
+from pynvml import NVMLError
 
 app = Flask(__name__)
 # 推送服务器的接口地址
@@ -27,7 +28,7 @@ def index():
     return json.dumps(System.obtain_all_info())
 
 
-@scheduler.task('interval', id='push_job', seconds=3, misfire_grace_time=900)
+# @scheduler.task('interval', id='push_job', seconds=3, misfire_grace_time=900)
 def push_job():
     """
     定时任务 推送系统信息
@@ -121,63 +122,69 @@ class System:
 
     @staticmethod
     def obtain_gpu_info():
-        """
-        获取gpu信息 只支持N卡
-        :return: gpu_info_list
-        """
-        # 初始化
-        pynvml.nvmlInit()
-        # gpu驱动版本
-        gpu_derive_info = pynvml.nvmlSystemGetDriverVersion()
-        # 获取Nvidia GPU块数
-        gpu_device_count = pynvml.nvmlDeviceGetCount()
-        # print("GPU个数：", gpu_device_count)
-        gpu_infos = []
-        for i in range(gpu_device_count):
-            # 获取GPU i的handle，后续通过handle来处理
-            handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-            # 通过handle获取GPU i的信息
-            memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            # gpu名称
-            gpu_name = str(pynvml.nvmlDeviceGetName(handle), encoding='utf-8')
-            # gpu温度
-            gpu_temperature = pynvml.nvmlDeviceGetTemperature(handle, 0)
-            # gpu风扇转速
-            # gpu_fan_speed = pynvml.nvmlDeviceGetFanSpeed(handle)
-            # 供电水平
-            gpu_power_state = pynvml.nvmlDeviceGetPowerState(handle)
-            # gpu计算核心满速使用率
-            gpu_util_rate = pynvml.nvmlDeviceGetUtilizationRates(handle).gpu
-            # gpu内存读写满速使用率
-            gpu_memory_rate = pynvml.nvmlDeviceGetUtilizationRates(handle).memory
-            # 对pid的gpu消耗进行统计 获取所有GPU上正在运行的进程信息
-            pid_all_info = pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
-            pid_infos = []
-            for pid_info in pid_all_info:
-                pid_user = psutil.Process(pid_info.pid).username()
-                pid_info = {
-                    'pid': pid_info.pid,
-                    'pidUser': pid_user,
-                    'usedGpuMemory': System.hum_convert(pid_info.usedGpuMemory)
+        try:
+            """
+            获取gpu信息 只支持N卡
+            :return: gpu_info_list
+            """
+            # 初始化
+            pynvml.nvmlInit()
+            # gpu驱动版本
+            gpu_derive_info = pynvml.nvmlSystemGetDriverVersion()
+            # 获取Nvidia GPU块数
+            gpu_device_count = pynvml.nvmlDeviceGetCount()
+            # print("GPU个数：", gpu_device_count)
+            gpu_infos = []
+            for i in range(gpu_device_count):
+                # 获取GPU i的handle，后续通过handle来处理
+                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                # 通过handle获取GPU i的信息
+                memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                # gpu名称
+                gpu_name = str(pynvml.nvmlDeviceGetName(handle), encoding='utf-8')
+                # gpu温度
+                gpu_temperature = pynvml.nvmlDeviceGetTemperature(handle, 0)
+                # gpu风扇转速
+                gpu_fan_speed = pynvml.nvmlDeviceGetFanSpeed(handle)
+                # 供电水平
+                gpu_power_state = pynvml.nvmlDeviceGetPowerState(handle)
+                # gpu计算核心满速使用率
+                gpu_util_rate = pynvml.nvmlDeviceGetUtilizationRates(handle).gpu
+                # gpu内存读写满速使用率
+                gpu_memory_rate = pynvml.nvmlDeviceGetUtilizationRates(handle).memory
+                # 对pid的gpu消耗进行统计 获取所有GPU上正在运行的进程信息
+                pid_all_info = pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
+                pid_infos = []
+                for pid_info in pid_all_info:
+                    pid_user = psutil.Process(pid_info.pid).username()
+                    pid_info = {
+                        'pid': pid_info.pid,
+                        'pidUser': pid_user,
+                        'usedGpuMemory': System.hum_convert(pid_info.usedGpuMemory)
+                    }
+                    pid_infos.append(pid_info)
+                info = {
+                    'gpuName': gpu_name,
+                    'driverVersion': str(gpu_derive_info, encoding='utf-8'),
+                    'memoryTotal': System.hum_convert(memory_info.total),
+                    'memoryUsed': System.hum_convert(memory_info.used),
+                    'memoryFree': System.hum_convert(memory_info.free),
+                    'freeRate': System.percentage_convert(memory_info.free / memory_info.total),
+                    'usedRate': System.percentage_convert(memory_info.used / memory_info.total),
+                    'temperature': gpu_temperature,
+                    'gpuFanSpeed': gpu_fan_speed,
+                    'powerSupplyLevel': gpu_power_state,
+                    'gpuUtilRate': gpu_util_rate,
+                    'gpuMemoryRate': gpu_memory_rate,
+                    'pidInfos': pid_infos
                 }
-                pid_infos.append(pid_info)
-            info = {
-                'gpuName': gpu_name,
-                'driverVersion': str(gpu_derive_info, encoding='utf-8'),
-                'memoryTotal': System.hum_convert(memory_info.total),
-                'memoryUsed': System.hum_convert(memory_info.used),
-                'memoryFree': System.hum_convert(memory_info.free),
-                'freeRate': System.percentage_convert(memory_info.free / memory_info.total),
-                'usedRate': System.percentage_convert(memory_info.used / memory_info.total),
-                'temperature': gpu_temperature,
-                'powerSupplyLevel': gpu_power_state,
-                'gpuUtilRate': gpu_util_rate,
-                'gpuMemoryRate': gpu_memory_rate,
-                'pidInfos': pid_infos
+                gpu_infos.append(info)
+            # 最后关闭管理工具
+            pynvml.nvmlShutdown()
+        except NVMLError:
+            return {
+                'error': '不支持的设备'
             }
-            gpu_infos.append(info)
-        # 最后关闭管理工具
-        pynvml.nvmlShutdown()
         return gpu_infos
 
     @staticmethod
